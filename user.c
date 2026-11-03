@@ -407,11 +407,11 @@ static void cmd_change_port(app_state_t *st, const char *port) {
     if (udp_exchange(st, req, reply, sizeof(reply)) != 0) return;
 
     char status[8];
-    if (reply_failed(parse_reply(reply, "RRM", status, sizeof(status)), reply))
+    if (reply_failed(parse_reply(reply, "RPT", status, sizeof(status)), reply))
         return;
 
     if (strcmp(status, "OK") == 0) {
-        printf("Changed.\n", fn); st->peerport = port;
+        printf("Changed.\n"); snprintf(st->peerport, sizeof(st->peerport), "%s", port);
     } else if (strcmp(status, "NLG") == 0) {
         printf("O utilizador nao tem sessao iniciada no DS. Faca login novamente.\n");
         clear_session(st);
@@ -433,8 +433,13 @@ static void cmd_change_port(app_state_t *st, const char *port) {
 
 /////
 
-static void cmd_change_tcp_port(app_state_t *st, const char *port) {
+static void cmd_change_tcp_port(app_state_t *st, const char *oldport, const char *port) {
     if (!valid_port(port)) {
+        printf("Port invalido.\n");
+        return;
+    }
+
+    if (!valid_port(oldport)) {
         printf("Port invalido.\n");
         return;
     }
@@ -443,35 +448,25 @@ static void cmd_change_tcp_port(app_state_t *st, const char *port) {
     if (fd == -1) return;
 
     char req[MAX_MSG];
-    int len = snprintf(req, sizeof(req), "PRT %s %s %s %s\n", st->uid, st->password, st->ds_port, port);
+    int len = snprintf(req, sizeof(req), "PRT %s %s %s %s\n", st->uid, st->password, oldport, port);
     if (write_all(fd, req, (size_t) len) != 0) {
         fprintf(stderr, "Erro a enviar pedido ao DS: %s\n", strerror(errno));
         close(fd);
         return;
     }
 
-    char *reply = tcp_read_line(fd, MAX_TCP_REPLY); //read indefinetly till the end '\n'
+    char *reply = tcp_read_line(fd, MAX_TCP_REPLY); 
     close(fd);
     if (reply == NULL) return;
 
-    if (strcmp(reply, "ERR") == 0) {
-        printf("O DS respondeu ERR (pedido invalido).\n");
+    char status[8];
+    if (!reply_failed(parse_reply(reply, "RPT", status, sizeof(status)), reply)) {
+        if (strcmp(status, "OK") == 0) {
+            printf("Changed.\n"); snprintf(st->peerport, sizeof(st->peerport), "%s", port); //change pport if OK
+        } else {
+            printf("Error :%s\n", status);
+        }
         free(reply);
-        return;
-    }
-
-    char *buf = strdup(reply);
-    if (buf == NULL) {
-        fprintf(stderr, "Sem memoria.\n");
-        free(reply);
-        return;
-    }
-
-    if (strcmp(status, "NLG") == 0 || strcmp(status, "ERR") == 0 || strcmp(status, "UNR") == 0|| strcmp(status, "INC") == 0 || strcmp(status, "WRP")  == 0) {
-        printf("Erro.\n");
-    }
-    if (strcmp(status, "OK") == 0 ) {
-        st->peerport = port;
     }
     
 }
@@ -903,7 +898,7 @@ done:
 static void print_commands(void) {
     printf("Comandos disponiveis: login UID password | logout | unregister | exit\n"
            "                      publish filename label | remove filename | list\n"
-           "                      versions filename\n");
+           "                      versions filename | port udp newport | port tcp oldport newport\n");
 }
 
 static void process_line(app_state_t *st, char *line, int *keep_running) {
@@ -946,17 +941,17 @@ static void process_line(app_state_t *st, char *line, int *keep_running) {
     } else if (strcmp(verb, "versions") == 0) {
         if (n != 2) { printf("Uso: versions filename\n"); return; }
         cmd_versions(st, arg1);
+    }
     else if (strcmp(verb, "port") == 0) {
-        if (n == 3  && strcmp(arg1, "udp") == 0) cmd_change_port(st, arg2);
-        else if(n == 4 && strcmp(arg1, "tcp") == 0) cmd_change_tcp_port(st, arg2, arg3);
+        if (n == 3  && strcmp(arg1, "udp") == 0) {cmd_change_port(st, arg2);}
+        else if(n == 4 && strcmp(arg1, "tcp") == 0) {cmd_change_tcp_port(st, arg2, arg3);}
         else { printf("Uso : port udp NEW_PORT\nUso : port tcp OLD_PORT NEW_PORT\n");}
     }
-    } else {
+    else {
         printf("Comando desconhecido: '%s'\n", verb);
         print_commands();
     }
 }
-
 
 static void usage(const char *prog) {
     fprintf(stderr, "Uso: %s -m peerport [-n DSIP] [-p DSport]\n", prog);
